@@ -5,12 +5,18 @@ import "io"
 import "log"
 import "fmt"
 import "strings"
+import "strconv"
 import "io/ioutil"
+import "math/rand"
 import "encoding/hex"
+import "path/filepath"
 import "crypto/sha256"
 
+
+const DEFAULT_CHUNK_SIZE = 1000000
 const BUFFER_SIZE int = 16000
 const FILE_WRITE_PERM = 0755
+const ACTIVE_FILE_NAME = "fragging.frag"
 
 func get_file(source string, write bool) *os.File {
   var source_file *os.File
@@ -90,6 +96,47 @@ func command_verify(payload_source string, hash_source string) {
   }
 }
 
+func command_frag(source string, target string, chunk_size int) {
+  target_dir := filepath.Dir(target)
+  active_file_name := filepath.Join(target_dir, strconv.Itoa(rand.Int()) + ".fragging")
+  source_file := get_file(source, false)
+  active_file := get_file(active_file_name, true)
+
+  chunk_bytes_left := chunk_size
+  global_hasher := sha256.New()
+	frag_hasher := sha256.New()
+  buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
+  for {
+    var read_slice []byte
+    if chunk_bytes_left >= BUFFER_SIZE {
+      read_slice = buffer
+    } else {
+      read_slice = buffer[:chunk_bytes_left]
+    }
+    bytes_read, err := source_file.Read(read_slice)
+    chunk_bytes_left -= bytes_read
+    global_hasher.Write(buffer)
+    frag_hasher.Write(buffer)
+    active_file.Write(buffer)
+    if err == io.EOF || chunk_bytes_left == 0 {
+      // pull out hash and reset hasher for next fragment 
+      hash := hex.EncodeToString(frag_hasher.Sum(nil))
+      frag_hasher.Reset();
+      // Reset the active file renaming the existing one to the new fragment and truncating the active one
+      active_file.Close()
+      frag_file_name := filepath.Join(target_dir, hash + ".frag")
+      os.Rename(active_file_name, frag_file_name)
+      if err != io.EOF {
+        active_file = get_file(active_file_name, true)
+      }
+    }
+    if err == io.EOF {
+      // If we actually hit the end of the file there are no more chunks
+      break;
+    }
+  }
+}
+
 func main() {
   // Parse command
   args := os.Args[1:]
@@ -124,6 +171,23 @@ func main() {
       var source = args[1]
       var hash = args[2]
       command_verify(source, hash)
+    case "frag":
+      if len(args) < 2 {
+        fmt.Printf("Please provide input source")
+        os.Exit(3)
+      }
+      var source = args[1]
+      var target string;
+      if len(args) < 3 {
+        if source == "-" {
+          target = "fragged.frag"
+        } else {
+          target = source + ".frag"
+        }
+      } else {
+        target = args[2]
+      }
+      command_frag(source, target, DEFAULT_CHUNK_SIZE)
     default:
       fmt.Printf("Invalid command '" + args[0] + "'")
   }
