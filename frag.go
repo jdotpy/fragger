@@ -52,7 +52,7 @@ func get_file(source string, write bool) *os.File {
   return source_file
 }
 
-func read_string_from_file(source *os.File) string {
+func read_entire_file(source *os.File) string {
   file_bytes, err := ioutil.ReadAll(source)
   if err != nil && err != io.EOF {
     log.Fatal(err)
@@ -61,7 +61,7 @@ func read_string_from_file(source *os.File) string {
 }
 
 func sha_file(source *os.File) string {
-	hasher := sha256.New()
+  hasher := sha256.New()
   buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
   for {
     _, err := source.Read(buffer)
@@ -99,7 +99,7 @@ func command_verify(payload_source string, hash_source string) {
   hash_file := get_file(hash_source, false)
 
   actual_hash := strings.TrimSpace(sha_file(payload_file))
-  expected_hash := strings.TrimSpace(read_string_from_file(hash_file))
+  expected_hash := strings.TrimSpace(read_entire_file(hash_file))
   if actual_hash != expected_hash {
     fmt.Printf("Expected:\n'%v'\ngot:\n'%v'", expected_hash, actual_hash)
     os.Exit(1)
@@ -169,7 +169,46 @@ func command_frag(source string, target string, chunk_size int) {
   target_file := get_file(target, true)
   target_file.Write(metadata_json)
   target_file.Close()
+}
 
+func command_defrag(source string, target string) {
+  var source_dir string
+  if source == "-" {
+    source_dir = "."
+  } else {
+    source_dir = filepath.Dir(source)
+  }
+  meta_file := get_file(source, false)
+  defer meta_file.Close()
+  meta_bytes, meta_read_error := ioutil.ReadAll(meta_file)
+  if meta_read_error != nil {
+    fmt.Printf("Invalid fragged meta file")
+    os.Exit(1)
+  }
+  metadata := &fragged_meta{}
+  meta_parse_error := json.Unmarshal(meta_bytes, metadata)
+  if meta_parse_error != nil {
+    fmt.Printf("Invalid fragged meta file, cannot parse JSON metadata\n")
+    log.Fatal(meta_parse_error)
+    os.Exit(1)
+  }
+
+  // Now actually "cat" the files together
+  target_file := get_file(target, true)
+  defer target_file.Close()
+  for _, fragment := range metadata.Fragments {
+    frag_file := get_file(filepath.Join(source_dir, fragment.Filename), false)
+    defer frag_file.Close()
+    io.Copy(target_file, frag_file)
+  }
+
+  // Verify
+  result_file := get_file(target, false)
+  actual_hash := sha_file(result_file)
+  if actual_hash != metadata.Hash {
+    fmt.Printf("Expected:\n'%v'\ngot:\n'%v'", metadata.Hash, actual_hash)
+    os.Exit(1)
+  }
 }
 
 func main() {
@@ -223,6 +262,19 @@ func main() {
         target = args[2]
       }
       command_frag(source, target, DEFAULT_CHUNK_SIZE)
+    case "defrag":
+      if len(args) < 2 {
+        fmt.Printf("Please provide input source")
+        os.Exit(3)
+      }
+      var source = args[1]
+      var target string;
+      if len(args) < 3 {
+        target = "-"
+      } else {
+        target = args[2]
+      }
+      command_defrag(source, target)
     default:
       fmt.Printf("Invalid command '" + args[0] + "'")
   }
