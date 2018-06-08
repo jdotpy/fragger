@@ -19,13 +19,13 @@ const FILE_WRITE_PERM = 0755
 const ACTIVE_FILE_NAME = "fragging.frag"
 
 type frag_meta struct {
-  hash string
-  filename string
+  Hash string
+  Filename string
 }
 
 type fragged_meta struct {
-  hash string
-  fragments []frag_meta
+  Hash string
+  Fragments []frag_meta
 }
 
 func get_file(source string, write bool) *os.File {
@@ -112,7 +112,7 @@ func command_frag(source string, target string, chunk_size int) {
   source_file := get_file(source, false)
   active_file := get_file(active_file_path, true)
 
-  meta := fragged_meta{fragments: make([]frag_meta, 1)}
+  meta := fragged_meta{Fragments: make([]frag_meta, 0)}
   chunk_bytes_left := chunk_size
   global_hasher := sha256.New()
 	frag_hasher := sha256.New()
@@ -141,10 +141,10 @@ func command_frag(source string, target string, chunk_size int) {
         // pull out hash and reset hasher for next fragment 
         frag_hash := hex.EncodeToString(frag_hasher.Sum(nil))
         frag_hasher.Reset();
-        frag_file_name := strconv.Itoa(len(meta.fragments) - 1) + "-" + frag_hash[:20] + ".frag"
+        frag_file_name := strconv.Itoa(len(meta.Fragments)) + "-" + frag_hash[:20] + ".frag"
         frag_file_path := filepath.Join(target_dir, frag_file_name)
 
-        meta.fragments = append(meta.fragments, frag_meta{hash: frag_hash, filename: frag_file_name})
+        meta.Fragments = append(meta.Fragments, frag_meta{Hash: frag_hash, Filename: frag_file_name})
 
         // Reset the active file renaming the existing one to the new fragment and truncating the active one
         active_file.Close()
@@ -162,10 +162,10 @@ func command_frag(source string, target string, chunk_size int) {
       break;
     }
   }
-  meta.hash = hex.EncodeToString(global_hasher.Sum(nil))
+  meta.Hash = hex.EncodeToString(global_hasher.Sum(nil))
 
   // Create main metadata file
-  metadata_json, _ := json.Marshal(meta)
+  metadata_json, _ := json.MarshalIndent(meta, "", "    ")
   target_file := get_file(target, true)
   target_file.Write(metadata_json)
   target_file.Close()
