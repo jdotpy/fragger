@@ -64,13 +64,13 @@ func sha_file(source *os.File) string {
   hasher := sha256.New()
   buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
   for {
-    _, err := source.Read(buffer)
+    bytes_read, err := source.Read(buffer)
     if err == io.EOF {
       break;
     } else if err != nil {
       log.Fatal(err);
     }
-    hasher.Write(buffer);
+    hasher.Write(buffer[:bytes_read]);
   }
   hash_bytes := hasher.Sum(nil)
   return hex.EncodeToString(hash_bytes)
