@@ -9,14 +9,24 @@ import "strconv"
 import "io/ioutil"
 import "math/rand"
 import "encoding/hex"
+import "encoding/json"
 import "path/filepath"
 import "crypto/sha256"
 
-
 const DEFAULT_CHUNK_SIZE = 1000000
-const BUFFER_SIZE int = 16000
+const BUFFER_SIZE int = 750000
 const FILE_WRITE_PERM = 0755
 const ACTIVE_FILE_NAME = "fragging.frag"
+
+type frag_meta struct {
+  hash string
+  filename string
+}
+
+type fragged_meta struct {
+  hash string
+  fragments []frag_meta
+}
 
 func get_file(source string, write bool) *os.File {
   var source_file *os.File
@@ -98,10 +108,11 @@ func command_verify(payload_source string, hash_source string) {
 
 func command_frag(source string, target string, chunk_size int) {
   target_dir := filepath.Dir(target)
-  active_file_name := filepath.Join(target_dir, strconv.Itoa(rand.Int()) + ".fragging")
+  active_file_path := filepath.Join(target_dir, strconv.Itoa(rand.Int()) + ".fragging")
   source_file := get_file(source, false)
-  active_file := get_file(active_file_name, true)
+  active_file := get_file(active_file_path, true)
 
+  meta := fragged_meta{fragments: make([]frag_meta, 1)}
   chunk_bytes_left := chunk_size
   global_hasher := sha256.New()
 	frag_hasher := sha256.New()
@@ -114,20 +125,36 @@ func command_frag(source string, target string, chunk_size int) {
       read_slice = buffer[:chunk_bytes_left]
     }
     bytes_read, err := source_file.Read(read_slice)
-    chunk_bytes_left -= bytes_read
-    global_hasher.Write(buffer)
-    frag_hasher.Write(buffer)
-    active_file.Write(buffer)
+    if bytes_read > 0 {
+      write_slice := read_slice[:bytes_read]
+      chunk_bytes_left -= bytes_read
+      global_hasher.Write(write_slice)
+      frag_hasher.Write(write_slice)
+      active_file.Write(write_slice)
+    }
     if err == io.EOF || chunk_bytes_left == 0 {
-      // pull out hash and reset hasher for next fragment 
-      hash := hex.EncodeToString(frag_hasher.Sum(nil))
-      frag_hasher.Reset();
-      // Reset the active file renaming the existing one to the new fragment and truncating the active one
-      active_file.Close()
-      frag_file_name := filepath.Join(target_dir, hash + ".frag")
-      os.Rename(active_file_name, frag_file_name)
+      empty_chunk := chunk_bytes_left == chunk_size
+      if empty_chunk {
+        active_file.Close()
+        _ = os.Remove(active_file_path)
+      } else {
+        // pull out hash and reset hasher for next fragment 
+        frag_hash := hex.EncodeToString(frag_hasher.Sum(nil))
+        frag_hasher.Reset();
+        frag_file_name := strconv.Itoa(len(meta.fragments) - 1) + "-" + frag_hash[:20] + ".frag"
+        frag_file_path := filepath.Join(target_dir, frag_file_name)
+
+        meta.fragments = append(meta.fragments, frag_meta{hash: frag_hash, filename: frag_file_name})
+
+        // Reset the active file renaming the existing one to the new fragment and truncating the active one
+        active_file.Close()
+        os.Rename(active_file_path, frag_file_path)
+      }
+
+      // Only re-make the "active" file if we havne't reached EOF
       if err != io.EOF {
-        active_file = get_file(active_file_name, true)
+        chunk_bytes_left = chunk_size
+        active_file = get_file(active_file_path, true)
       }
     }
     if err == io.EOF {
@@ -135,6 +162,14 @@ func command_frag(source string, target string, chunk_size int) {
       break;
     }
   }
+  meta.hash = hex.EncodeToString(global_hasher.Sum(nil))
+
+  // Create main metadata file
+  metadata_json, _ := json.Marshal(meta)
+  target_file := get_file(target, true)
+  target_file.Write(metadata_json)
+  target_file.Close()
+
 }
 
 func main() {
@@ -180,9 +215,9 @@ func main() {
       var target string;
       if len(args) < 3 {
         if source == "-" {
-          target = "fragged.frag"
+          target = "stdin.fragged"
         } else {
-          target = source + ".frag"
+          target = source + ".fragged"
         }
       } else {
         target = args[2]

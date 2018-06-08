@@ -12,3 +12,6 @@
 *.frag
 *.fragged
 *.dat
+
+# Editor and crap files
+*.swp
