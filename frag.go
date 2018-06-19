@@ -65,12 +65,19 @@ func sha_file(source *os.File) string {
   buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
   for {
     bytes_read, err := source.Read(buffer)
+    if (bytes_read > 0) {
+      if (bytes_read != len(buffer)) {
+        var write_slice = buffer[:bytes_read];
+        hasher.Write(write_slice);
+      } else {
+        hasher.Write(buffer);
+      }
+    }
     if err == io.EOF {
       break;
     } else if err != nil {
       log.Fatal(err);
     }
-    hasher.Write(buffer[:bytes_read]);
   }
   hash_bytes := hasher.Sum(nil)
   return hex.EncodeToString(hash_bytes)
